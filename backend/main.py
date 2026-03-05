@@ -22,7 +22,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from typing import Sequence
 
 from config import SUPPLY_CHAIN_SEGMENTS

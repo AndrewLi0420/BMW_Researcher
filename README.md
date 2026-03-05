@@ -7,6 +7,7 @@ Automated data pipeline that searches for battery industry companies and news us
 - **Pydantic Validation**: Validates zip codes, coordinates, URLs, and dates before DB insertion
 - **Deduplication**: Composite key `(Company, Facility_Name, Facility_City)` prevents duplicates
 - **Scheduled Automation**: Weekly pipeline runs via `scheduler.py`
+- **Web UI**: Single-page React frontend to run segments and download CSV exports
 
 ## Setup
 ```bash
@@ -16,20 +17,47 @@ pip install -r requirements.txt
 cp .env.example .env   # add your GEMINI_API_KEY
 ```
 
-## Usage
+## Running the Web UI
+
+Start both the backend and frontend in separate terminals:
+
+**Terminal 1 — API server:**
 ```bash
-# Full pipeline
+source venv/bin/activate
+python server.py
+# Runs at http://localhost:8000
+```
+
+**Terminal 2 — Frontend:**
+```bash
+cd frontend
+npm install   # first time only
+npm run dev
+# Open http://localhost:5173
+```
+
+Pick a supply chain segment, click **Run Pipeline**, then **Download CSV** when it finishes.
+
+## CLI Usage
+```bash
+# Full pipeline (all 15 segments)
 python main.py
 
-# Single segment, dry run
-python main.py --segments "Cell Manufacturing" --dry-run
+# Specific segments only
+python main.py --segments "Cell Manufacturing" "Recycling"
 
-# Export to CSV
-sqlite3 -header -csv battery_pipeline.db "SELECT * FROM battery_facilities_full;" > facilities.csv
+# Dry run — print extracted data without writing to DB
+python main.py --segments "Anodes" --dry-run
+
+# Skip news search phase
+python main.py --no-news
+
+# Weekly scheduled runs (every Monday 08:00)
+python scheduler.py
 
 # Run tests
 python -m pytest tests/ -v
 ```
 
 ## Tech Stack
-Python 3.10+ · SQLAlchemy · Pydantic · Google Gemini API · SQLite
+Python 3.10+ · FastAPI · SQLAlchemy · Pydantic · Google Gemini API · SQLite · React · Vite · Tailwind CSS

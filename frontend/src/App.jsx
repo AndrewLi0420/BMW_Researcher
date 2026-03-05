@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const SEGMENTS = [
+const SEGMENTS = [ //Add more freely
   'Raw Materials',
   'Battery Grade Materials',
   'Anodes',
@@ -17,6 +17,7 @@ const SEGMENTS = [
   'Equipment & Machinery',
   'Research & Testing',
 ]
+
 
 export default function App() {
   const [segment, setSegment] = useState(SEGMENTS[0])
