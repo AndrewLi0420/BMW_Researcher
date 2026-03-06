@@ -24,11 +24,26 @@ export default function App() {
   const [status, setStatus] = useState('idle') // idle | running | done | error
   const [result, setResult] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
+  const [elapsed, setElapsed] = useState(0)
+  const [facilities, setFacilities] = useState([])
+  const [expandedId, setExpandedId] = useState(null)
+
+  // Stopwatch — counts up every second while running
+  useEffect(() => {
+    if (status !== 'running') {
+      setElapsed(0)
+      return
+    }
+    const id = setInterval(() => setElapsed(s => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [status])
 
   async function handleRun() {
     setStatus('running')
     setResult(null)
     setErrorMsg('')
+    setFacilities([])
+    setExpandedId(null)
 
     try {
       const res = await fetch('/api/run', {
@@ -44,6 +59,7 @@ export default function App() {
 
       const data = await res.json()
       setResult(data)
+      setFacilities(data.facilities || [])
       setStatus('done')
     } catch (err) {
       setErrorMsg(err.message)
@@ -78,8 +94,8 @@ export default function App() {
       </header>
 
       {/* Main */}
-      <main className="flex-1 flex items-center justify-center px-6 py-16">
-        <div className="w-full max-w-lg">
+      <main className="flex-1 flex items-start justify-center px-6 py-16">
+        <div className="w-full max-w-2xl">
           {/* Hero text */}
           <div className="mb-10 text-center">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -104,6 +120,8 @@ export default function App() {
                 setSegment(e.target.value)
                 setStatus('idle')
                 setResult(null)
+                setFacilities([])
+                setExpandedId(null)
               }}
               disabled={status === 'running'}
               className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-gray-900 text-sm
@@ -133,15 +151,108 @@ export default function App() {
               )}
             </button>
 
+            {/* Progress bar + stopwatch */}
+            {status === 'running' && (
+              <div className="mt-4">
+                <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="h-1.5 bg-bmw-blue rounded-full"
+                    style={{ animation: 'progress-fill 45s ease-out forwards' }}
+                  />
+                </div>
+                <p className="text-center text-xs text-gray-400 mt-2">
+                  Querying Gemini and verifying data… {elapsed}s elapsed
+                </p>
+              </div>
+            )}
+
             {/* Result area */}
             {status === 'done' && result && (
               <div className="mt-6 pt-6 border-t border-gray-100">
-                <p className="text-gray-700 text-sm mb-4">
-                  Found{' '}
-                  <span className="font-bold text-gray-900">{result.facilities_found}</span>{' '}
-                  {result.facilities_found === 1 ? 'facility' : 'facilities'} for{' '}
-                  <span className="font-medium text-bmw-blue">{result.segment}</span>.
-                </p>
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-gray-700 text-sm">
+                    Found{' '}
+                    <span className="font-bold text-gray-900">{result.facilities_found}</span>{' '}
+                    {result.facilities_found === 1 ? 'facility' : 'facilities'} for{' '}
+                    <span className="font-medium text-bmw-blue">{result.segment}</span>
+                  </p>
+                  <CredibilityLegend />
+                </div>
+
+                {/* Facility cards */}
+                {facilities.length > 0 && (
+                  <div className="space-y-2 mb-4 max-h-[480px] overflow-y-auto pr-1">
+                    {facilities.map((fac) => (
+                      <div key={fac.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        {/* Main row */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 truncate">
+                              {fac.company}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {[fac.facility_name, fac.facility_city, fac.facility_state_or_province]
+                                .filter(Boolean).join(' · ')}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                            <ConfidenceBadge score={fac.confidence_score} />
+                            <VerificationBadge status={fac.verification_status} />
+                            <WebsiteIcon reachable={fac.website_reachable} url={fac.company_website} />
+                          </div>
+                        </div>
+
+                        {/* Expandable citations */}
+                        {fac.citations && fac.citations.length > 0 && (
+                          <div className="mt-2">
+                            <button
+                              onClick={() => setExpandedId(expandedId === fac.id ? null : fac.id)}
+                              className="text-xs text-bmw-blue hover:underline"
+                            >
+                              {expandedId === fac.id ? 'Hide' : 'Show'} sources ({fac.citations.length})
+                            </button>
+                            {expandedId === fac.id && (
+                              <ul className="mt-1 space-y-0.5 pl-2">
+                                {fac.citations.map((c, i) => {
+                                  const ok = fac.citations_ok?.[i]
+                                  const isUrl = c.startsWith('http')
+                                  return (
+                                    <li key={i} className="text-xs text-gray-600 flex items-start gap-1">
+                                      <span className="text-gray-400 mt-0.5">›</span>
+                                      {isUrl ? (
+                                        <span className="flex items-center gap-1 min-w-0">
+                                          <span
+                                            title={ok === true ? 'Link works' : ok === false ? 'Link is broken (404 or unreachable)' : 'Not checked'}
+                                            className="shrink-0"
+                                          >
+                                            {ok === true  ? <span className="text-green-500">✓</span>
+                                           : ok === false ? <span className="text-red-400">✗</span>
+                                           :                <span className="text-gray-300">?</span>}
+                                          </span>
+                                          <a
+                                            href={c}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={`hover:underline break-all ${ok === false ? 'text-gray-400 line-through' : 'text-bmw-blue'}`}
+                                          >
+                                            {c}
+                                          </a>
+                                        </span>
+                                      ) : (
+                                        <span>{c}</span>
+                                      )}
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <button
                   onClick={handleDownload}
                   className="w-full rounded-lg border border-bmw-blue text-bmw-blue hover:bg-blue-50
@@ -174,6 +285,8 @@ export default function App() {
   )
 }
 
+// ── Helper components ─────────────────────────────────────────────────────────
+
 function Spinner() {
   return (
     <svg
@@ -204,5 +317,61 @@ function DownloadIcon() {
     >
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
     </svg>
+  )
+}
+
+function ConfidenceBadge({ score }) {
+  if (score == null) return <span className="text-xs text-gray-300">—</span>
+  const color =
+    score >= 80 ? 'bg-green-100 text-green-800' :
+    score >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${color}`}>
+      {score}%
+    </span>
+  )
+}
+
+function VerificationBadge({ status }) {
+  if (!status) return null
+  const color =
+    status === 'Verified'   ? 'bg-green-100 text-green-700' :
+    status === 'Unverified' ? 'bg-red-100 text-red-700' :
+                              'bg-yellow-100 text-yellow-700'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${color}`}>
+      {status}
+    </span>
+  )
+}
+
+function WebsiteIcon({ reachable, url }) {
+  const icon =
+    reachable === true  ? <span className="text-green-500">✓</span> :
+    reachable === false ? <span className="text-red-400">✗</span> :
+                          <span className="text-gray-300">?</span>
+  const label =
+    reachable === true  ? 'Website reachable' :
+    reachable === false ? 'Website unreachable' :
+                          'Website not checked'
+  if (url && reachable !== false) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" title={label} className="text-sm leading-none">
+        {icon}
+      </a>
+    )
+  }
+  return <span className="text-sm leading-none" title={label}>{icon}</span>
+}
+
+function CredibilityLegend() {
+  return (
+    <div className="flex items-center gap-2 text-xs text-gray-400">
+      <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded">High</span>
+      <span className="bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded">Med</span>
+      <span className="bg-red-100 text-red-800 px-1.5 py-0.5 rounded">Low</span>
+      <span className="ml-1">confidence</span>
+    </div>
   )
 }

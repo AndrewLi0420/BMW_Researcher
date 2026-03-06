@@ -94,6 +94,27 @@ class GeminiClient:
             '  "facility_phone"             — contact number\n'
             '  "latitude"                   — float\n'
             '  "longitude"                  — float\n'
+            '  "confidence_score"           — integer 0-100: your confidence this record is real and accurate\n'
+            '  "citations"                  — JSON array of strings: direct URLs to the sources you used (e.g., ["https://reuters.com/...", "https://energy.gov/..."]). Use real, specific URLs where possible; if no URL is available for a source, use the source name instead.\n'
+        )
+        return self._request(prompt)
+
+    def verify_facilities(self, segment: str, companies: list[str]) -> str:
+        """
+        Ask Gemini to fact-check a list of companies for a given segment.
+        Returns a JSON array with verification results per company.
+        """
+        company_list = "\n".join(f"- {c}" for c in companies)
+        prompt = (
+            "You are a battery industry expert performing a fact-check. "
+            f'For the "{segment}" supply chain segment, verify each company below.\n\n'
+            f"Companies:\n{company_list}\n\n"
+            "Return ONLY a valid JSON array — no markdown code fences, no explanation. "
+            "Each object must have these keys:\n"
+            '  "company"            — exactly as given above\n'
+            '  "exists"             — true if this is a real, verifiable company\n'
+            '  "battery_related"    — true if genuinely active in the battery or energy storage industry\n'
+            '  "verification_notes" — one sentence explaining your assessment\n'
         )
         return self._request(prompt)
 

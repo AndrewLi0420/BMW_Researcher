@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, field_validator, HttpUrl
 
@@ -38,6 +38,10 @@ class FacilitySchema(BaseModel):
     facility_phone: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    confidence_score: Optional[int] = None      # 0-100, Gemini self-reported
+    citations: Optional[List[str]] = None        # source names from Gemini
+    website_reachable: Optional[bool] = None     # set by server after HTTP check
+    verification_status: Optional[str] = None    # "Verified"/"Uncertain"/"Unverified"
 
     # ── Validators ───────────────────────────────────────────────────────
 

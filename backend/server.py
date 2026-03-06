@@ -5,7 +5,7 @@ server.py — FastAPI backend for the BMW Battery Intelligence frontend.
 Endpoints
 ---------
   GET  /api/segments          → list of supply-chain segments
-  POST /api/run               → run pipeline for a segment, return facility count
+  POST /api/run               → run pipeline for a segment, return facility details + credibility data
   GET  /api/download-csv      → download facilities for a segment as CSV
 
 Usage
@@ -19,9 +19,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import sys
 import os
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 # Ensure project root is on the path so local modules resolve
 sys.path.insert(0, os.path.dirname(__file__))
@@ -33,7 +37,9 @@ from pydantic import BaseModel
 
 from config import SUPPLY_CHAIN_SEGMENTS
 from db.models import init_db, get_session, BatteryFacility
-from main import run_pipeline
+from api.perplexity_client import GeminiClient
+from pipeline.extractor import extract_facilities, extract_verification
+from pipeline.loader import upsert_facilities
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,16 +62,48 @@ app.add_middleware(
 init_db()
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _check_website(url: str | None) -> bool | None:
+    """HTTP HEAD check to verify a company website is reachable."""
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(str(url), method="HEAD")
+        req.add_header("User-Agent", "Mozilla/5.0")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status < 400
+    except Exception:
+        return False
+
+
 # ── Request / Response models ────────────────────────────────────────────────
 
 class RunRequest(BaseModel):
     segment: str
 
 
+class FacilityOut(BaseModel):
+    id: int
+    company: str
+    facility_name: Optional[str] = None
+    facility_city: Optional[str] = None
+    facility_state_or_province: Optional[str] = None
+    supply_chain_segment: str
+    status: Optional[str] = None
+    company_website: Optional[str] = None
+    confidence_score: Optional[int] = None
+    citations: Optional[list] = None
+    citations_ok: Optional[list] = None   # parallel bool list — True/False/None per citation
+    website_reachable: Optional[bool] = None
+    verification_status: Optional[str] = None
+
+
 class RunResponse(BaseModel):
     segment: str
     facilities_found: int
     status: str
+    facilities: list[FacilityOut]
 
 
 # ── CSV column order ─────────────────────────────────────────────────────────
@@ -90,6 +128,10 @@ CSV_COLUMNS = [
     "facility_phone",
     "latitude",
     "longitude",
+    "confidence_score",
+    "citations",
+    "website_reachable",
+    "verification_status",
 ]
 
 
@@ -104,8 +146,10 @@ def get_segments() -> list[str]:
 @app.post("/api/run", response_model=RunResponse)
 def run_segment(body: RunRequest) -> RunResponse:
     """
-    Run the pipeline for a single segment.
-    Skips the news phase to keep response times reasonable.
+    Run the pipeline for a single segment with three credibility layers:
+      1. Gemini returns confidence_score + citations per facility
+      2. A second Gemini call verifies each company exists and is battery-related
+      3. HTTP HEAD checks on company websites for reachability
     """
     if body.segment not in SUPPLY_CHAIN_SEGMENTS:
         raise HTTPException(
@@ -115,27 +159,114 @@ def run_segment(body: RunRequest) -> RunResponse:
         )
 
     logger.info("Running pipeline for segment: %s", body.segment)
+    client = GeminiClient()
+
+    # Phase 1: Fetch and extract facilities (confidence + citations come from Gemini)
     try:
-        run_pipeline(
-            segments=[body.segment],
-            dry_run=False,
-            search_news_flag=False,
-        )
+        raw = client.search_facilities(body.segment)
+        facilities = extract_facilities(raw)
     except Exception as exc:
         logger.error("Pipeline failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # Count facilities stored for this segment
-    session = get_session()
-    count = (
-        session.query(BatteryFacility)
-        .filter(BatteryFacility.supply_chain_segment == body.segment)
-        .count()
-    )
-    session.close()
+    # Phase 2: Gemini fact-check verification pass
+    verification: dict = {}
+    if facilities:
+        companies = list({f.company for f in facilities})
+        try:
+            raw_verify = client.verify_facilities(body.segment, companies)
+            verification = extract_verification(raw_verify)
+        except Exception as exc:
+            logger.warning("Verification pass failed (continuing without it): %s", exc)
 
-    logger.info("Pipeline complete — %d facilities for '%s'", count, body.segment)
-    return RunResponse(segment=body.segment, facilities_found=count, status="ok")
+        # Apply verification_status to each facility schema object
+        for fac in facilities:
+            v = verification.get(fac.company)
+            if v:
+                fac.verification_status = v["verification_status"]
+
+    # Phase 3: Concurrent website reachability checks
+    if facilities:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {fac.company: executor.submit(_check_website, fac.company_website)
+                       for fac in facilities}
+        for fac in facilities:
+            fac.website_reachable = futures[fac.company].result()
+
+    # Upsert to DB (loader handles citations JSON encoding)
+    session = get_session()
+    try:
+        upsert_facilities(session, facilities)
+    finally:
+        session.close()
+
+    # Query saved rows to get IDs and build response
+    session = get_session()
+    try:
+        rows = (
+            session.query(BatteryFacility)
+            .filter(BatteryFacility.supply_chain_segment == body.segment)
+            .all()
+        )
+
+        # Decode citations for all rows first
+        rows_citations: list[list[str] | None] = []
+        for row in rows:
+            decoded = None
+            if row.citations:
+                try:
+                    decoded = json.loads(row.citations)
+                except Exception:
+                    decoded = [row.citations]
+            rows_citations.append(decoded)
+
+        # Collect all unique citation URLs and check them concurrently
+        all_citation_urls: set[str] = set()
+        for clist in rows_citations:
+            if clist:
+                for c in clist:
+                    if isinstance(c, str) and c.startswith("http"):
+                        all_citation_urls.add(c)
+
+        citation_status: dict[str, bool | None] = {}
+        if all_citation_urls:
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures_map = {url: executor.submit(_check_website, url) for url in all_citation_urls}
+            citation_status = {url: f.result() for url, f in futures_map.items()}
+
+        facility_out: list[FacilityOut] = []
+        for row, citations_decoded in zip(rows, rows_citations):
+            citations_ok = None
+            if citations_decoded:
+                citations_ok = [
+                    citation_status.get(c) if isinstance(c, str) and c.startswith("http") else None
+                    for c in citations_decoded
+                ]
+            facility_out.append(FacilityOut(
+                id=row.id,
+                company=row.company,
+                facility_name=row.facility_name,
+                facility_city=row.facility_city,
+                facility_state_or_province=row.facility_state_or_province,
+                supply_chain_segment=row.supply_chain_segment,
+                status=row.status,
+                company_website=row.company_website,
+                confidence_score=row.confidence_score,
+                citations=citations_decoded,
+                citations_ok=citations_ok,
+                website_reachable=row.website_reachable,
+                verification_status=row.verification_status,
+            ))
+    finally:
+        session.close()
+
+    logger.info("Pipeline complete — %d facilities for '%s'", len(facility_out), body.segment)
+    return RunResponse(
+        segment=body.segment,
+        facilities_found=len(facility_out),
+        status="ok",
+        facilities=facility_out,
+    )
 
 
 @app.get("/api/download-csv")

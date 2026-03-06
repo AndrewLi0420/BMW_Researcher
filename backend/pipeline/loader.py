@@ -8,6 +8,7 @@ Handles:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Sequence
 
@@ -42,15 +43,19 @@ def upsert_facilities(
                 )
             ).scalar_one_or_none()
 
+            data = fac.model_dump()
+            if isinstance(data.get("citations"), list):
+                data["citations"] = json.dumps(data["citations"])
+
             if existing:
                 # Update all fields except the PK
-                for field, value in fac.model_dump().items():
+                for field, value in data.items():
                     if value is not None:
                         setattr(existing, field, value)
                 stats["updated"] += 1
                 logger.debug("Updated facility: %s / %s", fac.company, fac.facility_name)
             else:
-                new_record = BatteryFacility(**fac.model_dump())
+                new_record = BatteryFacility(**data)
                 session.add(new_record)
                 stats["inserted"] += 1
                 logger.debug("Inserted facility: %s / %s", fac.company, fac.facility_name)

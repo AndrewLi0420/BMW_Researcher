@@ -57,6 +57,10 @@ class BatteryFacility(Base):
     facility_phone = Column(String(50), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    confidence_score = Column(Integer, nullable=True)
+    citations = Column(Text, nullable=True)          # JSON-encoded list of source names
+    website_reachable = Column(Boolean, nullable=True)
+    verification_status = Column(String(50), nullable=True)
 
     # Composite uniqueness for deduplication
     __table_args__ = (
@@ -112,9 +116,30 @@ engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 
 
+def migrate_db() -> None:
+    """Add credibility columns to battery_facilities_full if they don't exist yet."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    for col, typ in [
+        ("confidence_score", "INTEGER"),
+        ("citations", "TEXT"),
+        ("website_reachable", "INTEGER"),
+        ("verification_status", "TEXT"),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE battery_facilities_full ADD COLUMN {col} {typ}")
+        except Exception:
+            pass  # column already exists
+    conn.commit()
+    conn.close()
+
+
 def init_db() -> None:
     """Create all tables if they do not already exist."""
     Base.metadata.create_all(bind=engine)
+    migrate_db()
 
 
 def get_session() -> Session:

@@ -77,6 +77,33 @@ def extract_facilities(raw_response: str) -> list[FacilitySchema]:
     return facilities
 
 
+def extract_verification(raw_response: str) -> dict[str, dict]:
+    """
+    Parse Gemini's fact-check response into a lookup dict keyed by company name.
+    Each value has: verification_status ("Verified"/"Uncertain"/"Unverified") and verification_notes.
+    """
+    records = _extract_json(raw_response)
+    result: dict[str, dict] = {}
+    for rec in records:
+        company = rec.get("company")
+        if not company:
+            continue
+        exists = bool(rec.get("exists", False))
+        battery_related = bool(rec.get("battery_related", False))
+        if exists and battery_related:
+            status = "Verified"
+        elif not exists:
+            status = "Unverified"
+        else:
+            status = "Uncertain"
+        result[company] = {
+            "verification_status": status,
+            "verification_notes": rec.get("verification_notes", ""),
+        }
+    logger.info("Verified %d companies", len(result))
+    return result
+
+
 def extract_news(raw_response: str) -> list[NewsSchema]:
     """
     Parse LLM output → list of validated NewsSchema objects.
