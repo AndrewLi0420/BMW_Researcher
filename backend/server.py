@@ -236,12 +236,23 @@ def run_segment(body: RunRequest) -> RunResponse:
 
         facility_out: list[FacilityOut] = []
         for row, citations_decoded in zip(rows, rows_citations):
-            citations_ok = None
+            # Filter out broken citation URLs
             if citations_decoded:
-                citations_ok = [
-                    citation_status.get(c) if isinstance(c, str) and c.startswith("http") else None
-                    for c in citations_decoded
+                valid_citations = [
+                    c for c in citations_decoded
+                    if not (isinstance(c, str) and c.startswith("http") and citation_status.get(c) is False)
                 ]
+            else:
+                valid_citations = citations_decoded
+
+            # If all citations were invalidated, remove the facility entirely
+            if not valid_citations:
+                session.delete(row)
+                continue
+
+            if valid_citations != citations_decoded:
+                row.citations = json.dumps(valid_citations)
+
             facility_out.append(FacilityOut(
                 id=row.id,
                 company=row.company,
@@ -252,11 +263,12 @@ def run_segment(body: RunRequest) -> RunResponse:
                 status=row.status,
                 company_website=row.company_website,
                 confidence_score=row.confidence_score,
-                citations=citations_decoded,
-                citations_ok=citations_ok,
+                citations=valid_citations,
+                citations_ok=None,
                 website_reachable=row.website_reachable,
                 verification_status=row.verification_status,
             ))
+        session.commit()
     finally:
         session.close()
 

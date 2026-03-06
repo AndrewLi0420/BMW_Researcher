@@ -213,37 +213,23 @@ export default function App() {
                             </button>
                             {expandedId === fac.id && (
                               <ul className="mt-1 space-y-0.5 pl-2">
-                                {fac.citations.map((c, i) => {
-                                  const ok = fac.citations_ok?.[i]
-                                  const isUrl = c.startsWith('http')
-                                  return (
-                                    <li key={i} className="text-xs text-gray-600 flex items-start gap-1">
-                                      <span className="text-gray-400 mt-0.5">›</span>
-                                      {isUrl ? (
-                                        <span className="flex items-center gap-1 min-w-0">
-                                          <span
-                                            title={ok === true ? 'Link works' : ok === false ? 'Link is broken (404 or unreachable)' : 'Not checked'}
-                                            className="shrink-0"
-                                          >
-                                            {ok === true  ? <span className="text-green-500">✓</span>
-                                           : ok === false ? <span className="text-red-400">✗</span>
-                                           :                <span className="text-gray-300">?</span>}
-                                          </span>
-                                          <a
-                                            href={c}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className={`hover:underline break-all ${ok === false ? 'text-gray-400 line-through' : 'text-bmw-blue'}`}
-                                          >
-                                            {c}
-                                          </a>
-                                        </span>
-                                      ) : (
-                                        <span>{c}</span>
-                                      )}
-                                    </li>
-                                  )
-                                })}
+                                {fac.citations.map((c, i) => (
+                                  <li key={i} className="text-xs text-gray-600 flex items-start gap-1">
+                                    <span className="text-gray-400 mt-0.5">›</span>
+                                    {c.startsWith('http') ? (
+                                      <a
+                                        href={c}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="hover:underline break-all text-bmw-blue"
+                                      >
+                                        {c}
+                                      </a>
+                                    ) : (
+                                      <span>{c}</span>
+                                    )}
+                                  </li>
+                                ))}
                               </ul>
                             )}
                           </div>
